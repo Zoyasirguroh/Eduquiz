@@ -206,6 +206,37 @@ textarea { resize: vertical; font-family: inherit; }
   background: #F1F5F9; border-radius: 999px; padding: .15rem .55rem; margin-top: .2rem;
 }
 
+/* ── Progress Box ── */
+.progress-card { border-left: 4px solid var(--primary); }
+.progress-log {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: .5rem;
+}
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  font-size: .9rem;
+  color: var(--muted);
+  animation: fadeIn .25s ease;
+}
+.progress-step.success { color: var(--remember); font-weight: 600; }
+.step-icon {
+  width: 20px;
+  text-align: center;
+  font-size: .85rem;
+  flex-shrink: 0;
+  animation: pulse 1.2s infinite;
+}
+.progress-step.success .step-icon { animation: none; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+@keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 
