@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EduQuiz Forge — AI Question Generator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">EduQuiz <strong>Forge</strong></span>
+      </div>
+      <p class="tagline">Curriculum-Aligned MCQ Generator · Powered by Gemma-7B &amp; Bloom's Taxonomy</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- ── Input Card ── -->
+    <section class="card input-card">
+      <h2 class="card-title">Generate Questions</h2>
+
+      <form id="gen-form" enctype="multipart/form-data" novalidate>
+
+        <!-- Config row -->
+        <div class="config-row">
+          <div class="form-group">
+            <label for="subject">Subject</label>
+            <input type="text" id="subject" name="subject" placeholder="e.g. Biology, Physics…" value="General" />
+          </div>
+          <div class="form-group">
+            <label for="grade">Grade / Level</label>
+            <select id="grade" name="grade">
+              <option>Primary School</option>
+              <option>Secondary School</option>
+              <option>Senior Secondary</option>
+              <option selected>Undergraduate</option>
+              <option>Postgraduate</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="num_questions">No. of Questions <span class="hint">(1–20)</span></label>
+            <input type="number" id="num_questions" name="num_questions" min="1" max="20" value="6" />
+          </div>
+        </div>
+
+        <!-- Input tabs -->
+        <div class="tab-bar">
+          <button type="button" class="tab-btn active" data-tab="text">Paste Text</button>
+          <button type="button" class="tab-btn" data-tab="pdf">Upload PDF</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-text">
+          <label for="topic_text">Topic / Chapter Text</label>
+          <textarea id="topic_text" name="topic_text" rows="10"
+            placeholder="Paste your textbook chapter or topic content here (minimum ~100 characters)…"></textarea>
+        </div>
+
+        <div class="tab-panel" id="tab-pdf">
+          <label>Upload PDF Chapter</label>
+          <div class="drop-zone" id="drop-zone">
+            <span class="drop-icon">📄</span>
+            <p>Drag &amp; drop a PDF here, or <label for="pdf_file" class="file-label">browse</label></p>
+            <input type="file" id="pdf_file" name="pdf_file" accept=".pdf" />
+            <p class="file-name" id="file-name-display"></p>
+          </div>
+        </div>
+
+        <div class="bloom-legend">
+          <span class="badge badge-remember">Remember</span>
+          <span class="badge badge-apply">Apply</span>
+          <span class="badge badge-analyse">Analyse</span>
+          <span class="legend-note">Questions distributed across all three Bloom's levels</span>
+        </div>
+
+        <button type="submit" class="btn-primary" id="gen-btn">
+          <span id="btn-text">Generate Questions</span>
+          <span id="btn-spinner" class="spinner hidden"></span>
+        </button>
+
+        <p class="error-msg hidden" id="error-msg"></p>
+      </form>
+    </section>
+
+    <!-- ── Results ── -->
+    <section class="card results-card hidden" id="results-section">
+      <div class="results-header">
+        <h2 class="card-title">Generated Questions</h2>
+        <div class="export-btns" id="export-btns">
+          <button class="btn-secondary" id="export-docx-btn">⬇ Download .docx</button>
+          <button class="btn-secondary" id="export-xml-btn">⬇ Moodle XML</button>
+        </div>
+      </div>
+      <div id="questions-container"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>EduQuiz Forge · The Oxford College of Science · 2025-26 · Amarai Elluru Vikranth (U03MS23S0159)</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
