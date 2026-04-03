@@ -1,7 +1,9 @@
 import os
 import json
 import uuid
-from flask import Flask, render_template, request, jsonify, send_file, session
+import queue
+import threading
+from flask import Flask, render_template, request, jsonify, send_file, Response, stream_with_context
 from werkzeug.utils import secure_filename
 
 from modules.pdf_parser import extract_text_from_pdf
@@ -16,8 +18,8 @@ ALLOWED_EXTENSIONS = {"pdf"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
-# In-memory store keyed by session id
-_results_store: dict[str, list] = {}
+# job_id -> {"questions": [...], "error": str, "done": bool, "queue": Queue}
+_jobs: dict[str, dict] = {}
 
 
 def allowed_file(filename: str) -> bool:
@@ -31,13 +33,12 @@ def index():
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    """Main generation endpoint — accepts PDF upload or raw text."""
+    """Accepts input, starts background generation, returns job_id immediately."""
     subject = request.form.get("subject", "General").strip()
     grade = request.form.get("grade", "Undergraduate").strip()
     num_questions = int(request.form.get("num_questions", 5))
     num_questions = max(1, min(num_questions, 20))
 
-    # --- Acquire source text ---
     text = ""
     file = request.files.get("pdf_file")
     if file and file.filename and allowed_file(file.filename):
@@ -53,38 +54,95 @@ def generate():
 
     if not text:
         return jsonify({"error": "Please provide a PDF file or paste topic text."}), 400
-
     if len(text) < 100:
-        return jsonify({"error": "Text is too short to generate meaningful questions. Please provide more content."}), 400
+        return jsonify({"error": "Text is too short. Please provide more content."}), 400
 
-    try:
-        questions = generate_mcqs(text, subject, grade, num_questions)
-    except Exception as exc:
-        return jsonify({"error": f"Generation failed: {str(exc)}"}), 500
+    job_id = str(uuid.uuid4())
+    q = queue.Queue()
+    _jobs[job_id] = {"questions": None, "error": None, "done": False, "queue": q}
 
-    # Store results for export
-    result_id = str(uuid.uuid4())
-    _results_store[result_id] = questions
+    def run():
+        try:
+            q.put(("progress", "Chunking and preparing content…"))
+            questions = generate_mcqs(
+                text, subject, grade, num_questions,
+                progress_cb=lambda msg: q.put(("progress", msg))
+            )
+            _jobs[job_id]["questions"] = questions
+            q.put(("done", questions))
+        except Exception as e:
+            _jobs[job_id]["error"] = str(e)
+            q.put(("error", str(e)))
+        finally:
+            _jobs[job_id]["done"] = True
 
-    return jsonify({"result_id": result_id, "questions": questions})
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
 
-@app.route("/export/docx/<result_id>")
-def export_as_docx(result_id: str):
-    questions = _results_store.get(result_id)
-    if not questions:
+@app.route("/progress/<job_id>")
+def progress(job_id: str):
+    """SSE endpoint — streams progress messages then final result."""
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+
+    def event_stream():
+        q = job["queue"]
+        while True:
+            try:
+                kind, payload = q.get(timeout=120)
+            except queue.Empty:
+                yield "event: error\ndata: {\"error\": \"Timed out waiting for LLM.\"}\n\n"
+                break
+
+            if kind == "progress":
+                yield f"event: progress\ndata: {json.dumps({'message': payload})}\n\n"
+            elif kind == "done":
+                yield f"event: done\ndata: {json.dumps({'questions': payload})}\n\n"
+                break
+            elif kind == "error":
+                yield f"event: error\ndata: {json.dumps({'error': payload})}\n\n"
+                break
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@app.route("/result/<job_id>")
+def get_result(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    if not job["done"]:
+        return jsonify({"error": "Job still running."}), 202
+    if job["error"]:
+        return jsonify({"error": job["error"]}), 500
+    return jsonify({"questions": job["questions"]})
+
+
+@app.route("/export/docx/<job_id>")
+def export_as_docx(job_id: str):
+    job = _jobs.get(job_id)
+    if not job or not job.get("questions"):
         return "Result not found or expired.", 404
-    path = export_docx(questions, result_id)
+    path = export_docx(job["questions"], job_id)
     return send_file(path, as_attachment=True, download_name="EduQuiz_Questions.docx",
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 
-@app.route("/export/xml/<result_id>")
-def export_as_xml(result_id: str):
-    questions = _results_store.get(result_id)
-    if not questions:
+@app.route("/export/xml/<job_id>")
+def export_as_xml(job_id: str):
+    job = _jobs.get(job_id)
+    if not job or not job.get("questions"):
         return "Result not found or expired.", 404
-    path = export_moodle_xml(questions, result_id)
+    path = export_moodle_xml(job["questions"], job_id)
     return send_file(path, as_attachment=True, download_name="EduQuiz_Moodle.xml",
                      mimetype="application/xml")
 

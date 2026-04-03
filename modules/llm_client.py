@@ -5,7 +5,7 @@ import re
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "gemma:7b-instruct"  # Ollama model tag for Gemma-7B-IT
+MODEL = "llama3.2:latest"  # Ollama model — change to gemma:7b-instruct if pulled
 
 
 def _call_ollama(prompt: str, temperature: float = 0.7) -> str:

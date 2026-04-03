@@ -92,12 +92,17 @@ def _generate_for_level(text: str, subject: str, grade: str,
     return validated
 
 
-def generate_mcqs(text: str, subject: str, grade: str, total: int) -> list[dict]:
+def generate_mcqs(text: str, subject: str, grade: str, total: int,
+                  progress_cb=None) -> list[dict]:
     """
     Generate total MCQs distributed across three Bloom's levels,
     then run the self-critique distractor loop on each question.
+    progress_cb(message: str) is called at each major step if provided.
     """
-    # Distribute questions across levels (floor division + remainder to Remember)
+    def notify(msg):
+        if progress_cb:
+            progress_cb(msg)
+
     per_level, remainder = divmod(total, 3)
     distribution = {
         "Remember": per_level + remainder,
@@ -110,12 +115,14 @@ def generate_mcqs(text: str, subject: str, grade: str, total: int) -> list[dict]
         if count == 0:
             continue
         try:
+            notify(f"Generating {count} '{level}' level question(s)…")
             questions = _generate_for_level(text, subject, grade, level, count)
-            # Self-critique loop
+            notify(f"Running self-critique on '{level}' distractors…")
             critiqued = [critique_and_improve(q) for q in questions]
             all_questions.extend(critiqued)
+            notify(f"'{level}' level done — {len(critiqued)} question(s) ready.")
         except Exception as e:
-            # Partial failure: attach error note and continue
+            notify(f"'{level}' level failed: {e}")
             all_questions.append({
                 "question": f"[Generation failed for {level} level]",
                 "options": ["N/A", "N/A", "N/A", "N/A"],
@@ -125,7 +132,6 @@ def generate_mcqs(text: str, subject: str, grade: str, total: int) -> list[dict]
                 "critique_note": "error",
             })
 
-    # Number questions
     for i, q in enumerate(all_questions, 1):
         q["number"] = i
 

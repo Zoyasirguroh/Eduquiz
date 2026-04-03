@@ -16,7 +16,7 @@ const pdfInput = document.getElementById("pdf_file");
 const fileNameDisplay = document.getElementById("file-name-display");
 
 dropZone.addEventListener("click", e => {
-  if (e.target.closest("label")) return; // label already opens the dialog natively
+  if (e.target.closest("label")) return;
   pdfInput.click();
 });
 dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("dragover"); });
@@ -25,16 +25,13 @@ dropZone.addEventListener("drop", e => {
   e.preventDefault();
   dropZone.classList.remove("dragover");
   const file = e.dataTransfer.files[0];
-  if (file && file.type === "application/pdf") {
-    setFile(file);
-  }
+  if (file && file.type === "application/pdf") setFile(file);
 });
 pdfInput.addEventListener("change", () => {
   if (pdfInput.files[0]) setFile(pdfInput.files[0]);
 });
 
 function setFile(file) {
-  // Transfer dropped file to the input via DataTransfer
   const dt = new DataTransfer();
   dt.items.add(file);
   pdfInput.files = dt.files;
@@ -42,59 +39,105 @@ function setFile(file) {
 }
 
 // ── Form submission ────────────────────────────────────────────────────────
-const form      = document.getElementById("gen-form");
-const genBtn    = document.getElementById("gen-btn");
-const btnText   = document.getElementById("btn-text");
-const btnSpinner = document.getElementById("btn-spinner");
-const errorMsg  = document.getElementById("error-msg");
-const resultsSection = document.getElementById("results-section");
+const form             = document.getElementById("gen-form");
+const genBtn           = document.getElementById("gen-btn");
+const btnText          = document.getElementById("btn-text");
+const btnSpinner       = document.getElementById("btn-spinner");
+const errorMsg         = document.getElementById("error-msg");
+const resultsSection   = document.getElementById("results-section");
 const questionsContainer = document.getElementById("questions-container");
-const exportBtns = document.getElementById("export-btns");
+const progressBox      = document.getElementById("progress-box");
+const progressLog      = document.getElementById("progress-log");
 
-let currentResultId = null;
+let currentJobId = null;
+let activeSource = null;
 
 form.addEventListener("submit", async e => {
   e.preventDefault();
   setLoading(true);
   hideError();
+  clearProgress();
+  resultsSection.classList.add("hidden");
 
   const formData = new FormData(form);
-
-  // If on text tab, clear any file
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
-  if (activeTab === "text") {
-    formData.delete("pdf_file");
-  } else {
-    formData.delete("topic_text");
-  }
+  if (activeTab === "text") formData.delete("pdf_file");
+  else formData.delete("topic_text");
 
+  // Step 1: POST to start job
+  let jobId;
   try {
     const res = await fetch("/generate", { method: "POST", body: formData });
-
     let data;
-    try {
-      data = await res.json();
-    } catch {
-      showError(`Server error (HTTP ${res.status}). Check the Flask console for details.`);
+    try { data = await res.json(); } catch {
+      showError(`Server error (HTTP ${res.status}).`);
+      setLoading(false);
       return;
     }
-
-    if (!res.ok || data.error) {
-      showError(data.error || "An unexpected error occurred.");
-      return;
-    }
-
-    currentResultId = data.result_id;
-    renderQuestions(data.questions);
-    resultsSection.classList.remove("hidden");
-    resultsSection.scrollIntoView({ behavior: "smooth" });
-
-  } catch (err) {
+    if (!res.ok || data.error) { showError(data.error || "Unexpected error."); setLoading(false); return; }
+    jobId = data.job_id;
+    currentJobId = jobId;
+  } catch {
     showError("Network error — make sure Flask is running.");
-  } finally {
     setLoading(false);
+    return;
   }
+
+  // Step 2: Open SSE stream for progress
+  showProgress();
+  if (activeSource) activeSource.close();
+  const source = new EventSource(`/progress/${jobId}`);
+  activeSource = source;
+
+  source.addEventListener("progress", ev => {
+    const { message } = JSON.parse(ev.data);
+    addProgressStep(message);
+  });
+
+  source.addEventListener("done", ev => {
+    source.close();
+    const { questions } = JSON.parse(ev.data);
+    addProgressStep("All done! Rendering questions…", true);
+    setTimeout(() => {
+      hideProgress();
+      renderQuestions(questions);
+      resultsSection.classList.remove("hidden");
+      resultsSection.scrollIntoView({ behavior: "smooth" });
+      setLoading(false);
+    }, 600);
+  });
+
+  source.addEventListener("error", ev => {
+    source.close();
+    try {
+      const { error } = JSON.parse(ev.data);
+      showError(error);
+    } catch {
+      showError("Generation failed. Check the Flask console for details.");
+    }
+    hideProgress();
+    setLoading(false);
+  });
+
+  source.onerror = () => {
+    source.close();
+    showError("Lost connection to server.");
+    hideProgress();
+    setLoading(false);
+  };
 });
+
+// ── Progress box ───────────────────────────────────────────────────────────
+function showProgress() { progressBox.classList.remove("hidden"); }
+function hideProgress() { progressBox.classList.add("hidden"); }
+function clearProgress() { progressLog.innerHTML = ""; }
+function addProgressStep(msg, success = false) {
+  const li = document.createElement("li");
+  li.className = "progress-step" + (success ? " success" : "");
+  li.innerHTML = `<span class="step-icon">${success ? "✓" : "…"}</span> ${escapeHtml(msg)}`;
+  progressLog.appendChild(li);
+  progressLog.scrollTop = progressLog.scrollHeight;
+}
 
 // ── Render questions ───────────────────────────────────────────────────────
 const BLOOM_COLORS = { Remember: "#16A34A", Apply: "#2563EB", Analyse: "#7C3AED" };
@@ -102,27 +145,21 @@ const OPTION_LABELS = ["A", "B", "C", "D"];
 
 function renderQuestions(questions) {
   questionsContainer.innerHTML = "";
-
   let currentLevel = null;
 
   questions.forEach(q => {
-    // Section header per Bloom level
     if (q.bloom_level !== currentLevel) {
       currentLevel = q.bloom_level;
+      const color = BLOOM_COLORS[currentLevel] || "#374151";
       const hdr = document.createElement("div");
       hdr.className = "bloom-section-header";
-      const color = BLOOM_COLORS[currentLevel] || "#374151";
-      hdr.innerHTML = `
-        <span class="badge" style="background:${color}">${currentLevel}</span>
-        <h3>${currentLevel} Level Questions</h3>`;
+      hdr.innerHTML = `<span class="badge" style="background:${color}">${currentLevel}</span>
+                       <h3>${currentLevel} Level Questions</h3>`;
       questionsContainer.appendChild(hdr);
     }
 
-    // Question card
     const card = document.createElement("div");
     card.className = "q-card";
-
-    // Header
     card.innerHTML = `
       <div class="q-card-header">
         <span class="q-number">Q${q.number}.</span>
@@ -138,19 +175,17 @@ function renderQuestions(questions) {
       <div class="q-explanation">
         <strong>Explanation:</strong> ${escapeHtml(q.explanation)}
       </div>
-      ${q.critique_note ? `<span class="critique-tag">🔍 ${escapeHtml(q.critique_note)}</span>` : ""}
-    `;
-
+      ${q.critique_note ? `<span class="critique-tag">🔍 ${escapeHtml(q.critique_note)}</span>` : ""}`;
     questionsContainer.appendChild(card);
   });
 }
 
 // ── Export buttons ─────────────────────────────────────────────────────────
 document.getElementById("export-docx-btn").addEventListener("click", () => {
-  if (currentResultId) window.location.href = `/export/docx/${currentResultId}`;
+  if (currentJobId) window.location.href = `/export/docx/${currentJobId}`;
 });
 document.getElementById("export-xml-btn").addEventListener("click", () => {
-  if (currentResultId) window.location.href = `/export/xml/${currentResultId}`;
+  if (currentJobId) window.location.href = `/export/xml/${currentJobId}`;
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -159,21 +194,10 @@ function setLoading(on) {
   btnText.textContent = on ? "Generating…" : "Generate Questions";
   btnSpinner.classList.toggle("hidden", !on);
 }
-
-function showError(msg) {
-  errorMsg.textContent = msg;
-  errorMsg.classList.remove("hidden");
-}
-
-function hideError() {
-  errorMsg.classList.add("hidden");
-  errorMsg.textContent = "";
-}
-
+function showError(msg) { errorMsg.textContent = msg; errorMsg.classList.remove("hidden"); }
+function hideError()    { errorMsg.classList.add("hidden"); errorMsg.textContent = ""; }
 function escapeHtml(str) {
   return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
