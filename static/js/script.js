@@ -167,15 +167,42 @@ function renderQuestions(questions) {
       </div>
       <div class="options-grid">
         ${q.options.map((opt, i) => `
-          <div class="option ${i === q.answer_index ? "correct" : ""}">
+          <div class="option" data-index="${i}" data-correct="${i === q.answer_index}">
             <span class="option-label">${OPTION_LABELS[i]}</span>
             <span>${escapeHtml(opt)}</span>
           </div>`).join("")}
       </div>
-      <div class="q-explanation">
+      <button class="btn-reveal" data-answer="${q.answer_index}" data-explanation="${escapeHtml(q.explanation)}">
+        Show Answer
+      </button>
+      <div class="q-explanation hidden">
         <strong>Explanation:</strong> ${escapeHtml(q.explanation)}
       </div>
-      ${q.critique_note ? `<span class="critique-tag">🔍 ${escapeHtml(q.critique_note)}</span>` : ""}`;
+      ${q.critique_note ? `<span class="critique-tag hidden">🔍 ${escapeHtml(q.critique_note)}</span>` : ""}`;
+
+    // Option click — let user pick before revealing
+    card.querySelectorAll(".option").forEach(opt => {
+      opt.addEventListener("click", () => {
+        if (card.dataset.revealed) return; // locked after reveal
+        card.querySelectorAll(".option").forEach(o => o.classList.remove("selected"));
+        opt.classList.add("selected");
+      });
+    });
+
+    // Reveal answer button
+    card.querySelector(".btn-reveal").addEventListener("click", function () {
+      card.dataset.revealed = "1";
+      const answerIdx = parseInt(this.dataset.answer);
+      card.querySelectorAll(".option").forEach((opt, i) => {
+        if (i === answerIdx) opt.classList.add("correct");
+        else if (opt.classList.contains("selected")) opt.classList.add("wrong");
+      });
+      card.querySelector(".q-explanation").classList.remove("hidden");
+      const tag = card.querySelector(".critique-tag");
+      if (tag) tag.classList.remove("hidden");
+      this.classList.add("hidden");
+    });
+
     questionsContainer.appendChild(card);
   });
 }

@@ -38,6 +38,7 @@ def generate():
     grade = request.form.get("grade", "Undergraduate").strip()
     num_questions = int(request.form.get("num_questions", 5))
     num_questions = max(1, min(num_questions, 20))
+    run_critique = request.form.get("run_critique") == "1"
 
     text = ""
     file = request.files.get("pdf_file")
@@ -66,7 +67,8 @@ def generate():
             q.put(("progress", "Chunking and preparing content…"))
             questions = generate_mcqs(
                 text, subject, grade, num_questions,
-                progress_cb=lambda msg: q.put(("progress", msg))
+                progress_cb=lambda msg: q.put(("progress", msg)),
+                run_critique=run_critique,
             )
             _jobs[job_id]["questions"] = questions
             q.put(("done", questions))

@@ -2,6 +2,7 @@
 
 import json
 import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.llm_client import generate_raw, extract_json_block
 from modules.critique_loop import critique_and_improve
 
@@ -93,11 +94,10 @@ def _generate_for_level(text: str, subject: str, grade: str,
 
 
 def generate_mcqs(text: str, subject: str, grade: str, total: int,
-                  progress_cb=None) -> list[dict]:
+                  progress_cb=None, run_critique: bool = True) -> list[dict]:
     """
-    Generate total MCQs distributed across three Bloom's levels,
-    then run the self-critique distractor loop on each question.
-    progress_cb(message: str) is called at each major step if provided.
+    Generate total MCQs distributed across three Bloom's levels in parallel,
+    then optionally run the self-critique distractor loop.
     """
     def notify(msg):
         if progress_cb:
@@ -110,27 +110,45 @@ def generate_mcqs(text: str, subject: str, grade: str, total: int,
         "Analyse": per_level,
     }
 
+    level_order = ["Remember", "Apply", "Analyse"]
+    results = {}  # level -> list of questions
+
+    def _generate_level(level, count):
+        notify(f"Generating '{level}' level question(s)…")
+        questions = _generate_for_level(text, subject, grade, level, count)
+        if run_critique:
+            notify(f"Self-critique on '{level}' distractors…")
+            questions = [critique_and_improve(q) for q in questions]
+        notify(f"'{level}' done — {len(questions)} question(s) ready.")
+        return level, questions
+
+    notify("Starting parallel generation across all 3 Bloom's levels…")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_generate_level, level, count): level
+            for level, count in distribution.items() if count > 0
+        }
+        for future in as_completed(futures):
+            level = futures[future]
+            try:
+                lv, qs = future.result()
+                results[lv] = qs
+            except Exception as e:
+                notify(f"'{level}' level failed: {e}")
+                results[level] = [{
+                    "question": f"[Generation failed for {level} level]",
+                    "options": ["N/A", "N/A", "N/A", "N/A"],
+                    "answer_index": 0,
+                    "explanation": str(e),
+                    "bloom_level": level,
+                    "critique_note": "error",
+                }]
+
+    # Preserve consistent level order
     all_questions = []
-    for level, count in distribution.items():
-        if count == 0:
-            continue
-        try:
-            notify(f"Generating {count} '{level}' level question(s)…")
-            questions = _generate_for_level(text, subject, grade, level, count)
-            notify(f"Running self-critique on '{level}' distractors…")
-            critiqued = [critique_and_improve(q) for q in questions]
-            all_questions.extend(critiqued)
-            notify(f"'{level}' level done — {len(critiqued)} question(s) ready.")
-        except Exception as e:
-            notify(f"'{level}' level failed: {e}")
-            all_questions.append({
-                "question": f"[Generation failed for {level} level]",
-                "options": ["N/A", "N/A", "N/A", "N/A"],
-                "answer_index": 0,
-                "explanation": str(e),
-                "bloom_level": level,
-                "critique_note": "error",
-            })
+    for level in level_order:
+        if level in results:
+            all_questions.extend(results[level])
 
     for i, q in enumerate(all_questions, 1):
         q["number"] = i
