@@ -70,7 +70,14 @@ form.addEventListener("submit", async e => {
 
   try {
     const res = await fetch("/generate", { method: "POST", body: formData });
-    const data = await res.json();
+
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      showError(`Server error (HTTP ${res.status}). Check the Flask console for details.`);
+      return;
+    }
 
     if (!res.ok || data.error) {
       showError(data.error || "An unexpected error occurred.");

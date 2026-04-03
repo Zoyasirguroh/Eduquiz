@@ -89,5 +89,10 @@ def export_as_xml(result_id: str):
                      mimetype="application/xml")
 
 
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "File too large. Maximum allowed size is 16 MB."}), 413
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000, use_reloader=False)
